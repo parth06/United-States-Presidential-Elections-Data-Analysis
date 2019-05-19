@@ -1,0 +1,348 @@
+---
+title: "Assignment 4"
+author: 
+- Sneh Patel (20525801), Parth Shah (20759634)
+- Gunjan Shah (20761635), Neha Bhatia (20762558)
+date: "2nd April 2019"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+**Group Name**: Fantastic 4  
+**Dataset**: We will be using data from past United States presidential elections collected from The American Presidency Project (https://www.presidency.ucsb.edu/) to run an analysis. 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(dplyr)
+library(car)
+library(purrr)
+library(ggplot2)
+library(tidyr)
+library(ez)
+```
+
+```{r echo=FALSE, results='hide'}
+# Full data on election results
+data_election_results = list.files(path = "data/elections", full.names = T) %>%
+  # Run read.table call on all files
+  map(read.table, header = T, sep = "\t") %>%
+  # Combine all data frames into a single data frame by row
+  reduce(rbind)
+
+# Read in extra data about specific elections
+data_elections = read.table("data/rcourse_lesson5_data_elections.txt", header=T, sep="\t")
+
+# Read in extra data about specific states
+data_states = read.table("data/rcourse_lesson5_data_states.txt", header=T, sep="\t")
+
+# See how many states in union versus confederacy
+#xtabs(~civil_war, data_states)
+```
+
+We first read and identify the dataset and look at the variables. The dataset has 13 features. It describes the election data of U.S. It gives the vote share of each party, in each state of that election year, contry state and also, describes the challenger and incumbent party at the time of election.  
+
+The United States has a total of 50 states from which data exists. However, only 11 of the states are Confederacy states and 25 of them are Union states. This clearly doesn't add up to 50. These missing states in the dataset are coded as NA for the civil_war variable. This is because these states were not a part of the United States at the time of the civil war.
+
+```{r echo=FALSE, results='hide'}
+## CLEAN DATA ####
+# Make data set balanced for Union and Confederacy states
+data_states_clean = data_states %>%
+  # Drop any data from states that were not in the US during the Civil War
+  filter(!is.na(civil_war)) %>%
+  # Drop any data besides the first 11 states in the Union or Confederacy based on date of US entry
+  group_by(civil_war) %>%
+  arrange(order_enter) %>%
+  ungroup()
+
+# Combine three data frames
+data_clean = data_election_results %>%
+  # Combine with election specific data
+  inner_join(data_elections, by="year") %>%
+  # Combine with state specific data
+  inner_join(data_states_clean,by="state") %>%
+  # Drop unused states
+  mutate(state = factor(state))
+
+head(data_clean)
+```
+
+```{r echo=FALSE}
+# Data averaged over years but not states
+data_stats = data_clean %>%
+  # Get percentages of incumbent vote for each state by independent variables 
+  group_by(state, incumbent_party, civil_war) %>%
+  summarise(perc_incumbent_mean = mean(perc_votes_incumbent, na.rm = T)) %>%
+  ungroup()
+```
+We averaged the data over the year and states for analysis.
+```{r echo=FALSE}
+# Data averaged over year and states for barplot
+data_stats_sum = data_stats %>%
+  # Get percentages of incumbent vote independent variables
+  group_by(incumbent_party, civil_war) %>%
+  summarise(mean = mean(perc_incumbent_mean, na.rm = T),
+            sd = sd(perc_incumbent_mean, na.rm = T),
+            n = n()) %>%
+  ungroup() %>%
+  # Create variable for standard error
+  mutate(se = sd / sqrt(n)) %>%
+  # Create variable for top of error bar
+  mutate(se_high = mean + se) %>%
+  # Create variable for bottomf of error bar
+  mutate(se_low = mean - se)
+
+data_stats_sum
+```
+The above mentioned data shows the average vote share over the year of parties in contry states.  
+
+## Analysis
+We want to assess the following:  
+1. Does the incumbent party (either Republican or Democrat) have an effect on the percentage of vote share during elections?  
+2. How do the civil war (either Confederate or Union) states vote for incumbents?  
+3. Does there exist some interaction between incumbency and civil war states?
+
+For preprocessing we decided to drop any states that have an NA for the civil_war variable. 
+
+For the analysis, we want to conduct ANOVA between 3 variables:  
+1. "party" (Democrat or Republican)   
+2. "civil war country" (Union or Confederate)  
+3. "incumbency of party" (Incumbent or Non-Incumbent)
+
+### Step 1: Initial Analysis
+
+Below is the histogram plot for the vote share for each party in each of the civil war states (Union or Confederate). The x-axis denotes the vote share party in percentage (binned at 10) and the y-axis denotes the frequency of times each vote share percentage occurred from 1964 - 2012 (from the dataset). 
+
+```{r echo=FALSE,fig.height = 4, warning=FALSE}
+# Histogram of full data set
+ggplot(data_clean, aes(x = perc_votes_incumbent,fill = incumbent_party)) +
+  geom_histogram(bins = 10) +
+  facet_grid(incumbent_party ~  civil_war) +
+  scale_fill_manual(values = c("blue", "red")) +
+  ggtitle("Percentage of Votes for Incumbent\nby Country in Civil War and Party of Incumbent") +
+  xlab("Civil War country and incumbent party") +
+  ylab("Count") +
+  theme(text=element_text(size=12), title=element_text(size=12),
+        legend.position="none",
+        strip.background = element_rect(color="white", fill="white"))
+```
+
+
+```{r echo=FALSE, fig.show="hide"}
+# Histogram of data averaged over years
+ggplot(data_stats, aes(x = perc_incumbent_mean,fill = incumbent_party)) +
+  geom_histogram(bins = 10) +
+  facet_grid(incumbent_party ~  civil_war) +
+  scale_fill_manual(values = c("blue", "red")) +
+  ggtitle("Percentage of Votes for Incumbent\nby Country in Civil War and Party of Incumbent") +
+  xlab("Civil War country and incumbent party") +
+  ylab("Count") +
+  theme(text=element_text(size=12), title=element_text(size=12),
+        legend.position="none",
+        strip.background = element_rect(color="white", fill="white"))
+```
+
+The boxplots below show a party's performance (in vote share percentage) when they are incumbent in either states (Union or Confederate).
+
+```{r echo=FALSE,fig.height = 4}
+#boxplot
+ggplot(data_stats, aes(x = civil_war, y = perc_incumbent_mean,fill = incumbent_party)) +
+  geom_boxplot() +
+  ylim(0, 100) +
+  geom_hline(yintercept = 50) +
+  scale_fill_manual(values = c("blue", "red")) +
+  ggtitle("Percentage of Votes for Incumbent\nby Country in Civil War and Party of Incumbent") +
+  xlab("Civil War country") +
+  ylab("Percentage of vote for incumbent") +
+  labs(fill = "") +
+  theme(text=element_text(size=12), title=element_text(size=12),
+        legend.position="top")
+```
+We can see that Republicans tend to do better than Democrats in Confederate states and Democrats do slightly better than Republicans in Union states. The below barplot shows this more clearly:
+```{r echo=FALSE,fig.height = 4}
+ggplot(data_stats_sum, aes(x = civil_war, y =mean, fill = incumbent_party)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_errorbar(aes(ymin = se_low, ymax = se_high),
+                width = 0.2,
+                position = position_dodge(0.9)) +
+  ylim(0, 100) +
+  geom_hline(yintercept = 50) +
+  scale_fill_manual(values = c("blue", "red")) +
+  ggtitle("Percentage of Votes for Incumbent\nby Country in Civil War and Party of Incumbent") +
+  xlab("Civil War country") +
+  ylab("Percentage of vote for incumbent") +
+  labs(fill = "") +
+  theme(text=element_text(size=12), title=element_text(size=12),
+        legend.position="top")
+```
+
+### Step 2: Assumptions
+
+For ANOVA, the following assumptions have to be met:  
+1. Homoscedasticity  
+2. Independent observations  
+3. Distributions within groups are normally distributed 
+
+We will test assumption 1. after building the model. As seen by histogram above, assumption 3. has been met. We confirmed this by generating the Q-Q Plot. For assumption 2. we will proceed by assuming that the data has independent observations. 
+
+```{r echo=FALSE}
+# Prepare data for t-test
+data_union_stats = data_stats %>%
+  # Only include Union states
+  filter(civil_war == "union") %>%
+  # Spread out dependent variable into two columns
+  spread(incumbent_party, perc_incumbent_mean)
+
+data_confederacy_stats = data_stats %>%
+  # Only include Confederacy states
+  filter(civil_war == "confederacy") %>%
+  # Spread out dependent variable into two columns
+  spread(incumbent_party, perc_incumbent_mean)
+
+data_democrat_stats = data_stats %>%
+  # Only include Democrat incumbents
+  filter(incumbent_party == "democrat")
+
+data_republican_stats = data_stats %>%
+  # Only include Republican incumbents
+  filter(incumbent_party == "republican")
+
+```
+
+### Step 3: Testing
+
+```{r}
+## BUILD MODELS ####
+# ANOVA (base R)
+incumbent.aov = aov(perc_incumbent_mean ~ incumbent_party * civil_war, data = data_stats)
+
+incumbent.aov_sum = summary(incumbent.aov)
+incumbent.aov_sum
+
+# ezANOVA
+incumbent.ezanova = ezANOVA(data.frame(data_stats),
+                            dv = perc_incumbent_mean,
+                            wid = state,
+                            within = incumbent_party,
+                            between = civil_war,
+                            type = "III")
+
+incumbent.ezanova
+```
+The results above show that the incumbent party variable as well as, the interaction between incumbent party and civil war states has a significant effect on the vote share percentage. Whereas, it shows that civil war has no effect since p > 0.05. 
+We should test for homoscedasticity on this model to fulfil assumption 1. from above: 
+```{r echo=FALSE}
+leveneTest(incumbent.aov)
+```
+We can see that the model passes this assumption as we get a p-value that is not significant. This means that we cannot reject the null hypothesis that the population variances are equal (homoscedasticity). 
+
+```{r echo=FALSE}
+# Prepare data for t-test
+data_union_stats = data_stats %>%
+  # Only include Union states
+  filter(civil_war == "union") %>%
+  # Spread out dependent variable into two columns
+  spread(incumbent_party, perc_incumbent_mean)
+
+data_confederacy_stats = data_stats %>%
+  # Only include Confederacy states
+  filter(civil_war == "confederacy") %>%
+  # Spread out dependent variable into two columns
+  spread(incumbent_party, perc_incumbent_mean)
+
+data_democrat_stats = data_stats %>%
+  # Only include Democrat incumbents
+  filter(incumbent_party == "democrat")
+
+data_republican_stats = data_stats %>%
+  # Only include Republican incumbents
+  filter(incumbent_party == "republican")
+```
+We've seen that there is a significant interaction between incumbent party and civil war states variables. Hence, it only makes sense to follow-up on what this interaction really means. We will proceed to conduct a series of t-tests (four in total) between the following:  
+1. Union states, Democrat vs. Republican (this will be dependent t-test)  
+2. Confederate states, Democrat vs. Republican (this will be dependent t-test)  
+3. Democrat incumbents, Union vs. Confederacy (this will be independent t-test)  
+4. Republican incumbents, Union vs. Confederacy (this will be independent t-test)
+
+We checked all assumptions on the variables and they meet all assumptions of independent and dependent t-tests. 
+
+```{r echo=FALSE}
+## FOLLOW-UP T-TESTS ####
+
+# Effect of incumbent party, separated by civil war
+incumbent_union.ttest = t.test(data_union_stats$democrat, data_union_stats$republican, paired = T)
+incumbent_union.ttest
+
+incumbent_confederacy.ttest = t.test(data_confederacy_stats$democrat, data_confederacy_stats$republican, paired = T)
+incumbent_confederacy.ttest
+
+# Effect of incumbent party, separated by civil war
+incumbent_democrat.ttest = t.test(perc_incumbent_mean ~ civil_war, paired = F, data = data_democrat_stats)
+incumbent_democrat.ttest
+
+incumbent_republican.ttest = t.test(perc_incumbent_mean ~ civil_war, paired = F, data = data_republican_stats)
+incumbent_republican.ttest
+
+#p.adjust(0.0408, method="bonferroni",n=4)
+```
+
+```{r echo=FALSE, results='hide'}
+#TODO: test effect size for each 
+t <- incumbent_union.ttest$statistic[[1]]
+df <- incumbent_union.ttest$parameter[[1]]
+r_incumbent_union <- sqrt(t^2/(t^2+df))
+round(r_incumbent_union, 3)
+
+t <- incumbent_confederacy.ttest$statistic[[1]]
+df <- incumbent_confederacy.ttest$parameter[[1]]
+r_incumbent_confederacy <- sqrt(t^2/(t^2+df))
+round(r_incumbent_confederacy, 3)
+
+t <- incumbent_democrat.ttest$statistic[[1]]
+df <- incumbent_democrat.ttest$parameter[[1]]
+r_incumbent_democrat <- sqrt(t^2/(t^2+df))
+round(r_incumbent_democrat, 3)
+
+t <- incumbent_republican.ttest$statistic[[1]]
+df <- incumbent_republican.ttest$parameter[[1]]
+r_incumbent_republican <- sqrt(t^2/(t^2+df))
+round(r_incumbent_republican, 3)
+
+```
+As we've done four tests we are going to use Bonferroni correction and divide our original p-value for significance (0.05) by four, giving us a new p-value of 0.0125.
+
+The results show:  
+
+1. Union states, Democrat vs. Republican  
+The t-test shows a non-significant p-value hence, the means are not significantly different from each other (this can be confirmed by by the boxplots above) between the two parties for the Union states. The effect size is fairly small (r=0.268).  
+
+2. Confederate states, Democrat vs. Republican  
+The t-test shows a significant p-value hence, the means are significantly different from each other (this can be confirmed by by the boxplots above) between the two parties for the Confederate states. The effect size is very strong (r=0.922).  
+
+3. Democrat incumbents, Union vs. Confederacy  
+The t-test shows a significant p-value hence, the means are significantly different from each other (this can be confirmed by by the boxplots above) between the two types of civil war states for the Democrats. The effect size is strong(r=0.661).  
+
+4. Republican incumbents, Union vs. Confederacy  
+The t-test shows a significant p-value hence, the means are significantly different from each other (this can be confirmed by by the boxplots above) between the two types of civil war states for the Republicans The effect size is strong (r=0.796).
+
+### Step 4: Conclusion
+
+There was a significant interaction effect between the incumbent party and contry states, on the percentage of vote.
+(F(1, 34) = 25.954476, p<.05).
+
+The Republicans tend to perform better in Confederacy states compared to Democrates (t = -7.5325, df = 10, p<0.0125) and compared to their performace in Union States(t = 7.501, df = 32.61, p<0.0125). The vote share for Democrates are higher in Union states than in confederacy (t = -4.5485, df = 26.598, p<0.0125). However, in the Union state, both parties vote share are significantly differentv (t=1.3616, df = 24, p>0.0125).
+
+## Contribution of members:
+- Sneh Patel (20525801) & Parth Shah (20759634):  
+1. Analysed, cleaned and merged the dataset
+2. Created the hypothesis questions
+3. Ran t-tests and checked its assumptions.
+4. Wrote the report
+5. Understood and checked Gunjan & Neha's work on project
+
+- Gunjan Shah (20761635) & Neha Bhatia (20762558)
+1. Filtered dataset to plot graphs and run analysis.
+2. Applied the anova.
+3. Checked the assumptions of it.
+4. Formatted the report.
+5. Understood and checked Sneh & Parth's work on project
